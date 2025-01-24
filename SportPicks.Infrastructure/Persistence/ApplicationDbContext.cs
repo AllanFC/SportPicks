@@ -1,7 +1,4 @@
-﻿using Domain.Users;
-using Microsoft.EntityFrameworkCore;
-
-namespace Infrastructure.Persistence;
+﻿namespace Infrastructure.Persistence;
 
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : DbContext(options)
 {
@@ -16,21 +13,28 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasKey(u => u.Id);
 
             entity.Property(u => u.Username)
-                  .IsRequired()
-                  .HasMaxLength(50);
+                .IsRequired()
+                .HasMaxLength(50);
 
             entity.Property(u => u.Email)
-                  .IsRequired()
-                  .HasMaxLength(100);
+                .IsRequired()
+                .HasMaxLength(100);
 
-            entity.Property(u => u.HashedPassword)
-                  .IsRequired();
+            entity.HasIndex(u => u.Email)
+                 .IsUnique();
+
+            entity.Property(u => u.PasswordHash)
+                .IsRequired();
 
             entity.Property(u => u.Salt)
-                  .IsRequired();
+                .IsRequired();
+
+            entity.Property(u => u.Provider)
+                .IsRequired()
+                .HasMaxLength(50);
 
             entity.Property(u => u.CreatedAt)
-                  .IsRequired();
+                .IsRequired();
         });
     }
 }

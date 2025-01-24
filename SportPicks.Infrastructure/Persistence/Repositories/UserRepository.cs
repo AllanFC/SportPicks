@@ -1,8 +1,4 @@
-﻿using Application.Common.Interfaces;
-using Domain.Users;
-using Microsoft.EntityFrameworkCore;
-
-namespace Infrastructure.Persistence.Repositories;
+﻿namespace Infrastructure.Persistence.Repositories;
 
 public class UserRepository : IUserRepository
 {

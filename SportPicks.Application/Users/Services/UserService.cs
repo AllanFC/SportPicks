@@ -1,9 +1,6 @@
-﻿using Application.Common.Interfaces;
-using Domain.Users;
+﻿namespace Application.Users.Services;
 
-namespace Application.Users.Services;
-
-public class UserService
+public class UserService : IUserService
 {
     private readonly IUserRepository _userRepository;
     private readonly IPasswordHasher _passwordHasher;
@@ -28,5 +25,15 @@ public class UserService
         await _userRepository.AddUserAsync(user);
 
         return user.Id;
+    }
+
+    public async Task<User?> LoginAsync(string email, string password)
+    {
+        var user = await _userRepository.GetUserByEmailAsync(email);
+        if (user == null) return null;
+
+        // Verify hashed password
+        var isValid = _passwordHasher.VerifyPassword(password, user.PasswordHash, user.Salt);
+        return isValid ? user : null;
     }
 }

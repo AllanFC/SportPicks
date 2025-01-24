@@ -1,9 +1,4 @@
-﻿using Application.Common.Interfaces;
-using Konscious.Security.Cryptography;
-using System.Security.Cryptography;
-using System.Text;
-
-namespace Infrastructure.Security;
+﻿namespace Infrastructure.Security;
 
 public class PasswordHasher : IPasswordHasher
 {

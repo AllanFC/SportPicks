@@ -1,6 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
-
-namespace Application.Users.Dtos;
+﻿namespace Application.Users.Dtos;
 
 public class RegisterUserDto
 {

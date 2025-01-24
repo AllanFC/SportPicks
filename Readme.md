@@ -6,4 +6,10 @@ Tech used
 
 
 Entity Framework Core
+
+
 dotnet ef migrations add InitialCreate --project .\SportPicks.Infrastructure --startup-project .\SportPicks.API
+
+dotnet ef database update --project .\SportPicks.Infrastructure
+
+dotnet ef migrations remove --project .\SportPicks.Infrastructure --startup-project .\SportPicks.API
