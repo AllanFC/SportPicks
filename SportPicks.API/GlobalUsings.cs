@@ -18,3 +18,4 @@ global using Microsoft.AspNetCore.Mvc;
 global using Scalar.AspNetCore;
 
 global using System.Text;
+global using System.ComponentModel.DataAnnotations;

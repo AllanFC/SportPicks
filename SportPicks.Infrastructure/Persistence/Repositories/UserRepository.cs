@@ -11,12 +11,12 @@ public class UserRepository : IUserRepository
 
     public async Task<bool> IsUsernameTakenAsync(string username)
     {
-        return await _context.Users.AnyAsync(u => u.Username == username);
+        return await _context.Users.AnyAsync(u => u.Username.ToLower() == username.ToLower());
     }
 
     public async Task<bool> IsEmailTakenAsync(string email)
     {
-        return await _context.Users.AnyAsync(u => u.Email == email);
+        return await _context.Users.AnyAsync(u => u.Email.ToLower() == email.ToLower());
     }
 
     public async Task AddUserAsync(User user)
@@ -25,13 +25,29 @@ public class UserRepository : IUserRepository
         await _context.SaveChangesAsync();
     }
 
+    public async Task UpdateUserAsync(User user)
+    {
+        _context.Users.Update(user);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task<User?> GetUserByIdAsync(Guid id)
+    {
+        return await _context.Users.FirstOrDefaultAsync(u => Guid.Equals(u.Id, id));
+    }
+
+    public async Task<User?> GetUserByRefreshTokenAsync(string refreshToken)
+    {
+        return await _context.Users.FirstOrDefaultAsync(u => u.RefreshToken == refreshToken);
+    }
+
     public async Task<User?> GetUserByUsernameAsync(string username)
     {
-        return await _context.Users.FirstOrDefaultAsync(u => u.Username == username);
+        return await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower());
     }
 
     public async Task<User?> GetUserByEmailAsync(string email)
     {
-        return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        return await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email.ToLower());
     }
 }
