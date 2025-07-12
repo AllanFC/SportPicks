@@ -1,4 +1,31 @@
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using Serilog.Sinks.PostgreSQL;
+using Serilog;
+
 var builder = WebApplication.CreateBuilder(args);
+
+var postgresqlDb = builder.Configuration.GetConnectionString("SportPicksDb");
+
+// Add Serilog to the application
+Log.Logger = new LoggerConfiguration()
+    .Enrich.FromLogContext()
+    .WriteTo.Console() // Logs to console
+    .WriteTo.PostgreSQL(
+        connectionString: postgresqlDb,
+        tableName: "Logs",
+        needAutoCreateTable: true,
+        columnOptions: new Dictionary<string, ColumnWriterBase>
+        {
+            { "Timestamp", new TimestampColumnWriter() },
+            { "Level", new LevelColumnWriter() },
+            { "Message", new RenderedMessageColumnWriter() },
+            { "Exception", new ExceptionColumnWriter() },
+            { "Properties", new PropertiesColumnWriter() }
+        })
+    .CreateLogger();
+
+// Set Serilog as the default logger
+builder.Host.UseSerilog();
 
 // Configure options pattern.
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
@@ -13,7 +40,7 @@ builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
 // Add DbContext using PostgreSQL connection string from configuration
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("SportPicksDb"),
+    options.UseNpgsql(postgresqlDb,
     b => b.MigrationsAssembly("SportPicks.Infrastructure")));
 
 // Add JWT Authentication
@@ -46,11 +73,22 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference();
 }
 
+app.UseSerilogRequestLogging();
+
 app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
+string frontendUrl = builder.Environment.IsDevelopment()
+    ? "http://localhost:3000"
+    : "http://localhost:3000"; // TODO: Change this to the production URL
+
+app.UseCors(builder => builder
+    .WithOrigins(frontendUrl) // Specify the frontend origin explicitly
+    .AllowAnyMethod()
+    .AllowAnyHeader()
+    .AllowCredentials());
 
 app.MapControllers();
 

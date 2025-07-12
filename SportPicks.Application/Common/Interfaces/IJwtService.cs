@@ -2,5 +2,9 @@
 
 public interface IJwtService
 {
-    string GenerateToken(User user);
+    string GenerateJwtToken(User user);
+    string GenerateRefreshToken();
+    Task<(string JwtToken, string RefreshToken)> GenerateTokensAsync(User user);
+    Task<(string JwtToken, string RefreshToken)> RefreshTokenAsync(string refreshToken);
+    Task RevokeRefreshTokenAsync(string refreshToken);
 }
