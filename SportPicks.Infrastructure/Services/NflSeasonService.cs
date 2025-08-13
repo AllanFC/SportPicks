@@ -86,7 +86,7 @@ public class NflSeasonService : INflSeasonService
         
         // Cache the fallback result for shorter time
         _cachedCurrentSeason = fallbackSeason;
-        _cacheExpiry = DateTime.Now.Add(TimeSpan.FromHours(1));
+        _cacheExpiry = DateTime.UtcNow.Add(TimeSpan.FromHours(1));
         
         return fallbackSeason;
     }
