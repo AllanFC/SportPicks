@@ -69,7 +69,7 @@ public class NflSeasonService : INflSeasonService
                     
                     // Cache the result
                     _cachedCurrentSeason = detectedSeason;
-                    _cacheExpiry = DateTime.Now.Add(_cacheTimeout);
+                    _cacheExpiry = DateTime.UtcNow.Add(_cacheTimeout);
                     
                     return detectedSeason;
                 }
