@@ -50,4 +50,10 @@ public class UserRepository : IUserRepository
     {
         return await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email.ToLower());
     }
+
+    /// <inheritdoc />
+    public async Task<List<User>> GetAllUsersAsync()
+    {
+        return await _context.Users.OrderBy(u => u.Username).ToListAsync();
+    }
 }

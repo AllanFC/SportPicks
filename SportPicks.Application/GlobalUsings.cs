@@ -1,6 +1,8 @@
 ﻿global using Application.Common.Interfaces;
 global using Application.Options;
 
+global using Domain.Common;
+global using Domain.Sports;
 global using Domain.Users;
 
 global using Microsoft.Extensions.Options;
