@@ -10,4 +10,10 @@ public interface IUserRepository
     Task <User?> GetUserByRefreshTokenAsync(string refreshToken);
     Task<User?> GetUserByUsernameAsync(string username);
     Task<User?> GetUserByEmailAsync(string email);
+    
+    /// <summary>
+    /// Gets all users in the system (for admin operations)
+    /// </summary>
+    /// <returns>List of all users</returns>
+    Task<List<User>> GetAllUsersAsync();
 }

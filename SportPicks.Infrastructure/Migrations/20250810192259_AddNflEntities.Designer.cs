@@ -3,6 +3,7 @@ using System;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace SportPicks.Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250810192259_AddNflEntities")]
+    partial class AddNflEntities
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -61,14 +64,6 @@ namespace SportPicks.Infrastructure.Migrations
                     b.Property<int>("Season")
                         .HasColumnType("integer");
 
-                    b.Property<int>("SeasonType")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SeasonTypeSlug")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -99,47 +94,6 @@ namespace SportPicks.Infrastructure.Migrations
                     b.HasIndex("HomeTeamEspnId", "AwayTeamEspnId", "MatchDate");
 
                     b.ToTable("Matches");
-                });
-
-            modelBuilder.Entity("Domain.Sports.Season", b =>
-                {
-                    b.Property<int>("Year")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Year"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("DisplayName")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTime>("EndDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime>("StartDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Year");
-
-                    b.HasIndex("EndDate");
-
-                    b.HasIndex("IsActive");
-
-                    b.HasIndex("StartDate");
-
-                    b.HasIndex("StartDate", "EndDate");
-
-                    b.ToTable("Seasons");
                 });
 
             modelBuilder.Entity("Domain.Sports.Team", b =>
@@ -239,21 +193,17 @@ namespace SportPicks.Infrastructure.Migrations
 
                     b.Property<string>("UserRole")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Username")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("Email")
                         .IsUnique();
-
-                    b.HasIndex("Provider");
-
-                    b.HasIndex("UserRole");
 
                     b.ToTable("Users");
                 });
