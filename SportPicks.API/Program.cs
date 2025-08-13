@@ -3,6 +3,19 @@ using Serilog.Sinks.PostgreSQL;
 using Serilog;
 using SportPicks.API.Authorization;
 using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using Application.Common.Interfaces;
+using Infrastructure.Persistence.Repositories;
+using Infrastructure.Services;
+using Infrastructure.ExternalApis.Espn;
+using Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Application.Users.Services;
+using Domain.Common;
+using Scalar.AspNetCore;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -40,11 +53,15 @@ builder.Services.AddScoped<IUserRoleService, UserRoleService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
 
-// Add NFL data synchronization services
-builder.Services.AddScoped<ITeamRepository, TeamRepository>();
-builder.Services.AddScoped<IMatchRepository, MatchRepository>();
+// Add multi-sport repositories
 builder.Services.AddScoped<ISeasonRepository, SeasonRepository>();
+builder.Services.AddScoped<ICompetitorRepository, CompetitorRepository>();
+builder.Services.AddScoped<IEventRepository, EventRepository>();
+
+// Add NFL season services (still needed for date calculations)
 builder.Services.AddScoped<INflSeasonService, NflSeasonService>();
+
+// Add NFL data synchronization services
 builder.Services.AddScoped<INflDataSyncService, NflDataSyncService>();
 builder.Services.AddScoped<ISeasonSyncService, SeasonSyncService>();
 
@@ -80,7 +97,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options.SaveToken = false; // Don't save tokens in AuthenticationProperties for security
         options.MapInboundClaims = false; // Keep original claim names
         
-        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidateAudience = true,
@@ -90,12 +107,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+            IssuerSigningKey = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
         };
 
         // Add custom event handlers for better logging
-        options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+        options.Events = new JwtBearerEvents
         {
             OnAuthenticationFailed = context =>
             {
@@ -125,6 +142,9 @@ builder.Services.AddOpenApi(options =>
 
 var app = builder.Build();
 
+// Apply database migrations on startup
+await ApplyMigrationsAsync(app);
+
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
@@ -142,6 +162,7 @@ else
 {
     // Use global exception handling middleware in production
     app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
+    app.MapScalarApiReference();
 }
 
 // Security headers middleware should be early in pipeline
@@ -193,4 +214,45 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
+}
+
+/// <summary>
+/// Applies database migrations on startup with proper error handling
+/// </summary>
+static async Task ApplyMigrationsAsync(WebApplication app)
+{
+    using var scope = app.Services.CreateScope();
+    var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    
+    try
+    {
+        logger.LogInformation("Checking for pending database migrations...");
+        
+        var pendingMigrations = await context.Database.GetPendingMigrationsAsync();
+        if (pendingMigrations.Any())
+        {
+            logger.LogInformation("Applying {Count} pending migrations: {Migrations}", 
+                pendingMigrations.Count(), string.Join(", ", pendingMigrations));
+            
+            await context.Database.MigrateAsync();
+            logger.LogInformation("Database migrations applied successfully");
+        }
+        else
+        {
+            logger.LogInformation("Database is up to date - no pending migrations");
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to apply database migrations - application will continue but may have issues");
+        
+        // In development, you might want to throw to prevent startup with a broken DB
+        // In production, you might want to continue and handle gracefully
+        if (app.Environment.IsDevelopment())
+        {
+            logger.LogCritical("Stopping application due to migration failure in development environment");
+            throw;
+        }
+    }
 }

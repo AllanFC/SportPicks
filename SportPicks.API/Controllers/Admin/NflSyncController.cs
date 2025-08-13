@@ -1,4 +1,8 @@
-using Application.NflSync.Dtos;
+using Application.Common.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+using SportPicks.API.Authorization;
 
 namespace SportPicks.API.Controllers.Admin;
 
@@ -31,121 +35,88 @@ public class NflSyncController : ControllerBase
     /// <response code="403">Forbidden - Admin role required</response>
     /// <response code="500">Internal server error</response>
     [HttpPost("teams")]
-    [Authorize(Policy = AuthorizationPolicies.NflDataSync)]
-    [ProducesResponseType<TeamSyncResponseDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<TeamSyncResponseDto>> SyncTeams(CancellationToken cancellationToken = default)
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> SyncTeams(CancellationToken cancellationToken = default)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         var userName = User.FindFirst(ClaimTypes.Name)?.Value;
         _logger.LogInformation("NFL teams sync requested by user {UserName} ({UserId})", userName, userId);
 
-        var teamCount = await _nflDataSyncService.SyncTeamsAsync(cancellationToken);
-
-        _logger.LogInformation("NFL teams sync completed successfully. {TeamCount} teams synced by {UserName} ({UserId})",
-            teamCount, userName, userId);
-
-        return Ok(new TeamSyncResponseDto
+        try
         {
-            Success = true,
-            Message = "Teams synchronized successfully",
-            TeamCount = teamCount,
-            SyncedAt = DateTime.UtcNow,
-            SyncedBy = userName
-        });
-    }
+            var teamCount = await _nflDataSyncService.SyncTeamsAsync(cancellationToken);
 
-    /// <summary>
-    /// Synchronizes NFL matches for the current season
-    /// </summary>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Sync result with match count</returns>
-    /// <response code="200">Matches synchronized successfully</response>
-    /// <response code="401">Unauthorized - JWT token required</response>
-    /// <response code="403">Forbidden - Admin role required</response>
-    /// <response code="500">Internal server error</response>
-    [HttpPost("matches")]
-    [Authorize(Policy = AuthorizationPolicies.NflDataSync)]
-    [ProducesResponseType<MatchSyncResponseDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<MatchSyncResponseDto>> SyncMatches(CancellationToken cancellationToken = default)
-    {
-        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var userName = User.FindFirst(ClaimTypes.Name)?.Value;
-        _logger.LogInformation("NFL matches sync requested by user {UserName} ({UserId})", userName, userId);
+            _logger.LogInformation("NFL teams sync completed successfully. {TeamCount} teams synced by {UserName} ({UserId})",
+                teamCount, userName, userId);
 
-        var matchCount = await _nflDataSyncService.SyncMatchesAsync(cancellationToken);
-
-        _logger.LogInformation("NFL matches sync completed successfully. {MatchCount} matches synced by {UserName} ({UserId})",
-            matchCount, userName, userId);
-
-        return Ok(new MatchSyncResponseDto
-        {
-            Success = true,
-            Message = "Matches synchronized successfully",
-            MatchCount = matchCount,
-            SyncedAt = DateTime.UtcNow,
-            SyncedBy = userName
-        });
-    }
-
-    /// <summary>
-    /// Synchronizes NFL matches for a specific date range
-    /// </summary>
-    /// <param name="request">Date range parameters</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Sync result with match count</returns>
-    /// <response code="200">Matches synchronized successfully</response>
-    /// <response code="400">Bad request - Invalid date format or range</response>
-    /// <response code="401">Unauthorized - JWT token required</response>
-    /// <response code="403">Forbidden - Admin role required</response>
-    /// <response code="500">Internal server error</response>
-    [HttpPost("matches/date-range")]
-    [Authorize(Policy = AuthorizationPolicies.NflDataSync)]
-    [ProducesResponseType<MatchSyncResponseDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<MatchSyncResponseDto>> SyncMatchesByDateRange(
-        [FromQuery] DateRangeSyncRequestDto request,
-        CancellationToken cancellationToken = default)
-    {
-        // Validate input using the DTO's validation method
-        var (isValid, start, end, errorMessage) = request.ValidateAndParse();
-        if (!isValid)
-        {
-            return BadRequest(new ErrorResponseDto { Message = errorMessage! });
+            return Ok(new
+            {
+                success = true,
+                message = "Teams synchronized successfully",
+                teamCount = teamCount,
+                syncedAt = DateTime.UtcNow,
+                syncedBy = userName
+            });
         }
-
-        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        var userName = User.FindFirst(ClaimTypes.Name)?.Value;
-        _logger.LogInformation("NFL matches sync by date range requested: {StartDate} to {EndDate} by user {UserName} ({UserId})",
-            start!.Value.ToString("yyyy-MM-dd"), end!.Value.ToString("yyyy-MM-dd"), userName, userId);
-
-        var matchCount = await _nflDataSyncService.SyncMatchesAsync(start.Value, end.Value, cancellationToken);
-
-        _logger.LogInformation("NFL matches sync by date range completed successfully. {MatchCount} matches synced by {UserName} ({UserId})",
-            matchCount, userName, userId);
-
-        return Ok(new MatchSyncResponseDto
+        catch (Exception ex)
         {
-            Success = true,
-            Message = "Matches synchronized successfully",
-            MatchCount = matchCount,
-            StartDate = start.Value.ToString("yyyy-MM-dd"),
-            EndDate = end.Value.ToString("yyyy-MM-dd"),
-            SyncedAt = DateTime.UtcNow,
-            SyncedBy = userName
-        });
+            _logger.LogError(ex, "Failed to sync NFL teams");
+            return StatusCode(500, new
+            {
+                success = false,
+                message = "Failed to sync NFL teams",
+                error = ex.Message
+            });
+        }
     }
 
     /// <summary>
-    /// Synchronizes NFL matches for a specific season
+    /// Synchronizes NFL matches/events for the current season
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Sync result with match count</returns>
+    /// <response code="200">Matches synchronized successfully</response>
+    /// <response code="401">Unauthorized - JWT token required</response>
+    /// <response code="403">Forbidden - Admin role required</response>
+    /// <response code="500">Internal server error</response>
+    [HttpPost("events")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> SyncEvents(CancellationToken cancellationToken = default)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var userName = User.FindFirst(ClaimTypes.Name)?.Value;
+        _logger.LogInformation("NFL events sync requested by user {UserName} ({UserId})", userName, userId);
+
+        try
+        {
+            var eventCount = await _nflDataSyncService.SyncMatchesAsync(cancellationToken);
+
+            _logger.LogInformation("NFL events sync completed successfully. {EventCount} events synced by {UserName} ({UserId})",
+                eventCount, userName, userId);
+
+            return Ok(new
+            {
+                success = true,
+                message = "Events synchronized successfully",
+                eventCount = eventCount,
+                syncedAt = DateTime.UtcNow,
+                syncedBy = userName
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to sync NFL events");
+            return StatusCode(500, new
+            {
+                success = false,
+                message = "Failed to sync NFL events",
+                error = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Synchronizes NFL matches/events for a specific season
     /// </summary>
     /// <param name="season">Season year (e.g., 2024)</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -155,48 +126,52 @@ public class NflSyncController : ControllerBase
     /// <response code="401">Unauthorized - JWT token required</response>
     /// <response code="403">Forbidden - Admin role required</response>
     /// <response code="500">Internal server error</response>
-    [HttpPost("matches/season/{season:int}")]
-    [Authorize(Policy = AuthorizationPolicies.NflDataSync)]
-    [ProducesResponseType<MatchSyncResponseDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<MatchSyncResponseDto>> SyncMatchesForSeason(
-        [FromRoute] int season,
-        CancellationToken cancellationToken = default)
+    [HttpPost("events/season/{season:int}")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> SyncEventsForSeason(int season, CancellationToken cancellationToken = default)
     {
-        // Validate season using proper DTO validation
-        var seasonRequest = new SeasonSyncRequestDto { Season = season };
-        var (isValid, errorMessage) = seasonRequest.Validate();
-        if (!isValid)
+        // Basic validation
+        if (season < 1990 || season > DateTime.UtcNow.Year + 2)
         {
-            return BadRequest(new ErrorResponseDto { Message = errorMessage! });
+            return BadRequest(new { message = "Invalid season year. Must be between 1990 and current year + 2." });
         }
 
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         var userName = User.FindFirst(ClaimTypes.Name)?.Value;
-        _logger.LogInformation("NFL matches sync for season {Season} requested by user {UserName} ({UserId})",
+        _logger.LogInformation("NFL events sync for season {Season} requested by user {UserName} ({UserId})",
             season, userName, userId);
 
-        var matchCount = await _nflDataSyncService.SyncMatchesForSeasonAsync(season, cancellationToken);
-
-        _logger.LogInformation("NFL matches sync for season {Season} completed successfully. {MatchCount} matches synced by {UserName} ({UserId})",
-            season, matchCount, userName, userId);
-
-        return Ok(new MatchSyncResponseDto
+        try
         {
-            Success = true,
-            Message = $"Matches for season {season} synchronized successfully",
-            MatchCount = matchCount,
-            Season = season,
-            SyncedAt = DateTime.UtcNow,
-            SyncedBy = userName
-        });
+            var eventCount = await _nflDataSyncService.SyncMatchesForSeasonAsync(season, cancellationToken);
+
+            _logger.LogInformation("NFL events sync for season {Season} completed successfully. {EventCount} events synced by {UserName} ({UserId})",
+                season, eventCount, userName, userId);
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Events for season {season} synchronized successfully",
+                eventCount = eventCount,
+                season = season,
+                syncedAt = DateTime.UtcNow,
+                syncedBy = userName
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to sync NFL events for season {Season}", season);
+            return StatusCode(500, new
+            {
+                success = false,
+                message = $"Failed to sync NFL events for season {season}",
+                error = ex.Message
+            });
+        }
     }
 
     /// <summary>
-    /// Performs a full synchronization of both teams and matches (HIGH IMPACT OPERATION)
+    /// Performs a full synchronization of both teams and events (HIGH IMPACT OPERATION)
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Sync result with both team and match counts</returns>
@@ -228,12 +203,8 @@ public class NflSyncController : ControllerBase
     /// <response code="403">Forbidden - Admin role with high-impact permissions required</response>
     /// <response code="500">Internal server error during synchronization</response>
     [HttpPost("full")]
-    [Authorize(Policy = AuthorizationPolicies.HighImpactOperations)]
-    [ProducesResponseType<FullSyncResponseDto>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<FullSyncResponseDto>> FullSync(CancellationToken cancellationToken = default)
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> FullSync(CancellationToken cancellationToken = default)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         var userName = User.FindFirst(ClaimTypes.Name)?.Value;
@@ -242,20 +213,33 @@ public class NflSyncController : ControllerBase
         _logger.LogWarning("HIGH-IMPACT OPERATION: Full NFL data sync requested by user {UserName} ({UserId}) - {Email}",
             userName, userId, userEmail);
 
-        var (teamCount, matchCount) = await _nflDataSyncService.PerformFullSyncAsync(cancellationToken);
-
-        _logger.LogWarning("HIGH-IMPACT OPERATION COMPLETED: Full NFL data sync by {UserName} ({UserId}) - Teams: {TeamCount}, Matches: {MatchCount}",
-            userName, userId, teamCount, matchCount);
-
-        return Ok(new FullSyncResponseDto
+        try
         {
-            Success = true,
-            Message = "Full synchronization completed successfully",
-            TeamCount = teamCount,
-            MatchCount = matchCount,
-            SyncedAt = DateTime.UtcNow,
-            SyncedBy = userName,
-            IsHighImpactOperation = true
-        });
+            var (teamCount, eventCount) = await _nflDataSyncService.PerformFullSyncAsync(cancellationToken);
+
+            _logger.LogWarning("HIGH-IMPACT OPERATION COMPLETED: Full NFL data sync by {UserName} ({UserId}) - Teams: {TeamCount}, Events: {EventCount}",
+                userName, userId, teamCount, eventCount);
+
+            return Ok(new
+            {
+                success = true,
+                message = "Full synchronization completed successfully",
+                teamCount = teamCount,
+                eventCount = eventCount,
+                syncedAt = DateTime.UtcNow,
+                syncedBy = userName,
+                isHighImpactOperation = true
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to perform full NFL sync");
+            return StatusCode(500, new
+            {
+                success = false,
+                message = "Failed to perform full NFL synchronization",
+                error = ex.Message
+            });
+        }
     }
 }

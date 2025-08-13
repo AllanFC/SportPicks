@@ -1,8 +1,8 @@
 ﻿using System.ComponentModel;
 
-namespace API.Controllers.Users.Models;
+namespace SportPicks.API.Controllers.Users.Models;
 
-public class RegisterUserModel
+public sealed class RegisterUserModel
 {
     [Required]
     [MinLength(2, ErrorMessage = "Username can not be shorter than 2 characters")]

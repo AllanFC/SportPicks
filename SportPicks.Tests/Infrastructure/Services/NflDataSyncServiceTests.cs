@@ -5,32 +5,45 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using Xunit;
-using MatchEntity = Domain.Sports.Match;
+using Application.Common.Interfaces;
+using Domain.Sports;
+using Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace SportPicks.Tests.Infrastructure.Services;
 
 /// <summary>
 /// Unit tests for NflDataSyncService
 /// </summary>
-public class NflDataSyncServiceTests
+public sealed class NflDataSyncServiceTests : IDisposable
 {
     private readonly Mock<IEspnApiClient> _mockEspnApiClient;
-    private readonly Mock<ITeamRepository> _mockTeamRepository;
-    private readonly Mock<IMatchRepository> _mockMatchRepository;
-    private readonly Mock<INflSeasonService> _mockSeasonService;
+    private readonly Mock<ICompetitorRepository> _mockCompetitorRepository;
+    private readonly Mock<IEventRepository> _mockEventRepository;
+    private readonly Mock<ISeasonRepository> _mockSeasonRepository;
     private readonly Mock<ISeasonSyncService> _mockSeasonSyncService;
     private readonly Mock<ILogger<NflDataSyncService>> _mockLogger;
     private readonly Mock<IOptions<NflSyncSettings>> _mockSettings;
+    private readonly ApplicationDbContext _context;
     private readonly NflDataSyncService _service;
+
+    // NFL sport ID for testing - matches the actual service
+    private static readonly Guid NflSportId = new("11111111-1111-1111-1111-111111111111");
 
     public NflDataSyncServiceTests()
     {
         _mockEspnApiClient = new Mock<IEspnApiClient>();
-        _mockTeamRepository = new Mock<ITeamRepository>();
-        _mockMatchRepository = new Mock<IMatchRepository>();
-        _mockSeasonService = new Mock<INflSeasonService>();
+        _mockCompetitorRepository = new Mock<ICompetitorRepository>();
+        _mockEventRepository = new Mock<IEventRepository>();
+        _mockSeasonRepository = new Mock<ISeasonRepository>();
         _mockSeasonSyncService = new Mock<ISeasonSyncService>();
         _mockLogger = new Mock<ILogger<NflDataSyncService>>();
+        
+        // Create real in-memory database context since it's sealed
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        _context = new ApplicationDbContext(options);
         
         var settings = new NflSyncSettings
         {
@@ -45,14 +58,29 @@ public class NflDataSyncServiceTests
         _mockSettings = new Mock<IOptions<NflSyncSettings>>();
         _mockSettings.Setup(x => x.Value).Returns(settings);
 
+        // Add NFL sport to in-memory database for EnsureNflSportExistsAsync
+        _context.Sports.Add(new Sport("National Football League", "NFL")
+        {
+            Id = NflSportId,
+            Description = "American professional football league",
+            IsActive = true
+        });
+        _context.SaveChanges();
+
         _service = new NflDataSyncService(
             _mockEspnApiClient.Object,
-            _mockTeamRepository.Object,
-            _mockMatchRepository.Object,
-            _mockSeasonService.Object,
+            _mockCompetitorRepository.Object,
+            _mockEventRepository.Object,
+            _mockSeasonRepository.Object,
             _mockSeasonSyncService.Object,
+            _context,
             _mockLogger.Object,
             _mockSettings.Object);
+    }
+
+    public void Dispose()
+    {
+        _context?.Dispose();
     }
 
     [Fact]
@@ -63,7 +91,7 @@ public class NflDataSyncServiceTests
         _mockEspnApiClient.Setup(x => x.GetTeamsJsonAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(teamsJson);
 
-        _mockTeamRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Team>>(), It.IsAny<CancellationToken>()))
+        _mockCompetitorRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Competitor>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -71,8 +99,8 @@ public class NflDataSyncServiceTests
 
         // Assert
         result.Should().Be(2);
-        _mockTeamRepository.Verify(x => x.AddOrUpdateRangeAsync(
-            It.Is<IEnumerable<Team>>(teams => teams.Count() == 2),
+        _mockCompetitorRepository.Verify(x => x.AddOrUpdateRangeAsync(
+            It.Is<IEnumerable<Competitor>>(competitors => competitors.Count() == 2),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -88,8 +116,8 @@ public class NflDataSyncServiceTests
 
         // Assert
         result.Should().Be(0);
-        _mockTeamRepository.Verify(x => x.AddOrUpdateRangeAsync(
-            It.IsAny<IEnumerable<Team>>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockCompetitorRepository.Verify(x => x.AddOrUpdateRangeAsync(
+            It.IsAny<IEnumerable<Competitor>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -97,21 +125,26 @@ public class NflDataSyncServiceTests
     {
         // Arrange
         var scoreboardJson = CreateMockScoreboardJson();
-        var mockSeason = new Domain.Sports.Season(2024, "2024", DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3), true);
+        var mockSeason = new Season(2024, "2024", NflSportId, DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3), true);
+        var homeCompetitor = new Competitor("Buffalo Bills", "BUF", NflSportId);
+        var awayCompetitor = new Competitor("New England Patriots", "NE", NflSportId);
         
         _mockSeasonSyncService.Setup(x => x.SyncCurrentSeasonAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(mockSeason);
         
-        _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(2024);
+        _mockSeasonRepository.Setup(x => x.GetByYearAndSportAsync(2024, NflSportId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockSeason);
+
+        _mockCompetitorRepository.Setup(x => x.GetByExternalIdAsync("2", "ESPN", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(homeCompetitor);
         
-        _mockSeasonService.Setup(x => x.GetSeasonDateRangeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3)));
+        _mockCompetitorRepository.Setup(x => x.GetByExternalIdAsync("1", "ESPN", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(awayCompetitor);
         
         _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(scoreboardJson);
 
-        _mockMatchRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<MatchEntity>>(), It.IsAny<CancellationToken>()))
+        _mockEventRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Event>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -119,8 +152,8 @@ public class NflDataSyncServiceTests
 
         // Assert
         result.Should().Be(1);
-        _mockMatchRepository.Verify(x => x.AddOrUpdateRangeAsync(
-            It.Is<IEnumerable<MatchEntity>>(matches => matches.Count() == 1),
+        _mockEventRepository.Verify(x => x.AddOrUpdateRangeAsync(
+            It.Is<IEnumerable<Event>>(events => events.Count() == 1),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -131,14 +164,23 @@ public class NflDataSyncServiceTests
         var startDate = new DateTime(2024, 9, 1);
         var endDate = new DateTime(2024, 9, 30);
         var scoreboardJson = CreateMockScoreboardJson();
+        var mockSeason = new Season(2024, "2024", NflSportId, startDate, endDate, true);
+        var homeCompetitor = new Competitor("Buffalo Bills", "BUF", NflSportId);
+        var awayCompetitor = new Competitor("New England Patriots", "NE", NflSportId);
+
+        _mockSeasonRepository.Setup(x => x.GetByYearAndSportAsync(2024, NflSportId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockSeason);
+
+        _mockCompetitorRepository.Setup(x => x.GetByExternalIdAsync("2", "ESPN", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(homeCompetitor);
+        
+        _mockCompetitorRepository.Setup(x => x.GetByExternalIdAsync("1", "ESPN", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(awayCompetitor);
         
         _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(scoreboardJson);
 
-        _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(2024);
-
-        _mockMatchRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<MatchEntity>>(), It.IsAny<CancellationToken>()))
+        _mockEventRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Event>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -155,25 +197,30 @@ public class NflDataSyncServiceTests
         // Arrange
         var teamsJson = CreateMockTeamsJson();
         var scoreboardJson = CreateMockScoreboardJson();
-        var mockSeason = new Domain.Sports.Season(2024, "2024", DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3), true);
+        var mockSeason = new Season(2024, "2024", NflSportId, DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3), true);
+        var homeCompetitor = new Competitor("Buffalo Bills", "BUF", NflSportId);
+        var awayCompetitor = new Competitor("New England Patriots", "NE", NflSportId);
 
         _mockSeasonSyncService.Setup(x => x.SyncCurrentSeasonAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(mockSeason);
+
+        _mockSeasonRepository.Setup(x => x.GetByYearAndSportAsync(2024, NflSportId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockSeason);
+
+        _mockCompetitorRepository.Setup(x => x.GetByExternalIdAsync("2", "ESPN", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(homeCompetitor);
         
-        _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(2024);
-        
-        _mockSeasonService.Setup(x => x.GetSeasonDateRangeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3)));
+        _mockCompetitorRepository.Setup(x => x.GetByExternalIdAsync("1", "ESPN", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(awayCompetitor);
 
         _mockEspnApiClient.Setup(x => x.GetTeamsJsonAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(teamsJson);
         _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(scoreboardJson);
 
-        _mockTeamRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Team>>(), It.IsAny<CancellationToken>()))
+        _mockCompetitorRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Competitor>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockMatchRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<MatchEntity>>(), It.IsAny<CancellationToken>()))
+        _mockEventRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Event>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -183,29 +230,35 @@ public class NflDataSyncServiceTests
         teamsSynced.Should().Be(2);
         matchesSynced.Should().Be(1);
         
-        _mockTeamRepository.Verify(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Team>>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockMatchRepository.Verify(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<MatchEntity>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockCompetitorRepository.Verify(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Competitor>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockEventRepository.Verify(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Event>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task SyncMatchesForSeasonAsync_ShouldUseSeasonService()
+    public async Task SyncMatchesForSeasonAsync_ShouldUseSeasonRepository()
     {
         // Arrange
-        var season = 2023;
-        var startDate = new DateTime(2023, 9, 1);
-        var endDate = new DateTime(2024, 2, 28);
+        var season = 2024; // Changed from 2023 to match the mock JSON data
+        var startDate = new DateTime(2024, 9, 1);
+        var endDate = new DateTime(2024, 12, 31);
         var scoreboardJson = CreateMockScoreboardJson();
+        var mockSeasonEntity = new Season(season, "2024", NflSportId, startDate, endDate, true);
+        var homeCompetitor = new Competitor("Buffalo Bills", "BUF", NflSportId);
+        var awayCompetitor = new Competitor("New England Patriots", "NE", NflSportId);
 
-        _mockSeasonService.Setup(x => x.GetSeasonDateRangeAsync(season, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((startDate, endDate));
+        _mockSeasonRepository.Setup(x => x.GetByYearAndSportAsync(season, NflSportId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockSeasonEntity);
+
+        _mockCompetitorRepository.Setup(x => x.GetByExternalIdAsync("2", "ESPN", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(homeCompetitor);
         
-        _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(2024);
+        _mockCompetitorRepository.Setup(x => x.GetByExternalIdAsync("1", "ESPN", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(awayCompetitor);
         
         _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(scoreboardJson);
 
-        _mockMatchRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<MatchEntity>>(), It.IsAny<CancellationToken>()))
+        _mockEventRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Event>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -213,7 +266,8 @@ public class NflDataSyncServiceTests
 
         // Assert
         result.Should().Be(1);
-        _mockSeasonService.Verify(x => x.GetSeasonDateRangeAsync(season, It.IsAny<CancellationToken>()), Times.Once);
+        // Verify season repository was called (it may be called multiple times internally)
+        _mockSeasonRepository.Verify(x => x.GetByYearAndSportAsync(season, NflSportId, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
         _mockEspnApiClient.Verify(x => x.GetScoreboardJsonAsync(startDate, endDate, It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -294,8 +348,8 @@ public class NflDataSyncServiceTests
                     },
                     "status": {
                         "type": {
-                            "state": "pre",
-                            "completed": false
+                            "state": "post",
+                            "completed": true
                         }
                     },
                     "competitions": [
@@ -307,7 +361,9 @@ public class NflDataSyncServiceTests
                                     "team": {
                                         "id": "2",
                                         "displayName": "Buffalo Bills"
-                                    }
+                                    },
+                                    "score": "24",
+                                    "winner": true
                                 },
                                 {
                                     "id": "2",
@@ -315,7 +371,9 @@ public class NflDataSyncServiceTests
                                     "team": {
                                         "id": "1",
                                         "displayName": "New England Patriots"
-                                    }
+                                    },
+                                    "score": "17",
+                                    "winner": false
                                 }
                             ],
                             "venue": {

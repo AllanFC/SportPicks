@@ -1,9 +1,7 @@
 ﻿global using API.Controllers.Authentication.Models;
-global using API.Controllers.Users.Models;
 
 global using Application.Authentication.Services;
 global using Application.Common.Interfaces;
-global using Application.NflSync.Dtos;
 global using Application.Options;
 global using Application.Users.Services;
 
@@ -26,7 +24,8 @@ global using Scalar.AspNetCore;
 global using SportPicks.API.Authorization;
 global using SportPicks.API.Configuration;
 global using SportPicks.API.Middleware;
+global using SportPicks.API.Models;
 
 global using System.Security.Claims;
 global using System.Text;
-global using System.ComponentModel.DataAnnotations;
+global using System.ComponentModel.DataAnnotations;global using System.ComponentModel.DataAnnotations;

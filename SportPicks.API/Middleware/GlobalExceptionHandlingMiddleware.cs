@@ -1,13 +1,14 @@
-using Application.NflSync.Dtos;
+using SportPicks.API.Models;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SportPicks.API.Middleware;
 
 /// <summary>
 /// Global exception handling middleware following .NET 9 best practices
 /// </summary>
-public class GlobalExceptionHandlingMiddleware
+public sealed class GlobalExceptionHandlingMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<GlobalExceptionHandlingMiddleware> _logger;
@@ -18,20 +19,23 @@ public class GlobalExceptionHandlingMiddleware
         ILogger<GlobalExceptionHandlingMiddleware> logger,
         IWebHostEnvironment environment)
     {
-        _next = next;
-        _logger = logger;
-        _environment = environment;
+        _next = next ?? throw new ArgumentNullException(nameof(next));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _environment = environment ?? throw new ArgumentNullException(nameof(environment));
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
+        
         try
         {
             await _next(context);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "An unhandled exception occurred during request processing");
+            _logger.LogError(ex, "An unhandled exception occurred during request processing for {Method} {Path}", 
+                context.Request.Method, context.Request.Path);
             await HandleExceptionAsync(context, ex);
         }
     }
@@ -40,7 +44,7 @@ public class GlobalExceptionHandlingMiddleware
     {
         context.Response.ContentType = "application/json";
 
-        var response = new ErrorResponseDto
+        var response = new ErrorResponse
         {
             Message = GetUserFriendlyMessage(exception),
             Timestamp = DateTime.UtcNow
@@ -63,7 +67,7 @@ public class GlobalExceptionHandlingMiddleware
                 response.Message = "Authentication required or token has expired.";
                 break;
 
-            case InvalidOperationException when exception.Message.Contains("role"):
+            case InvalidOperationException when exception.Message.Contains("role", StringComparison.OrdinalIgnoreCase):
                 context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
                 response.Message = "Insufficient permissions to perform this operation.";
                 break;
@@ -92,7 +96,8 @@ public class GlobalExceptionHandlingMiddleware
 
         var jsonResponse = JsonSerializer.Serialize(response, new JsonSerializerOptions
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         });
 
         await context.Response.WriteAsync(jsonResponse);

@@ -6,12 +6,6 @@
 - Captures season types (preseason, regular season, postseason) and official week numbers
 - Uses ESPN Core API for authoritative season information
 
-## **Key Improvements Made**
-1. **Removed arbitrary hardcoded values** - No more `AddDays(-30)` or random buffer calculations
-2. **Database-first season management** - Store ESPN's official season data permanently  
-3. **Official ESPN week numbers** - Use ESPN's data instead of date calculations
-4. **Season type support** - Distinguish between preseason (1), regular (2), and postseason (3)
-
 ## **Database Tables**
 - **Teams**: ESPN team data (Patriots, Bills, etc.)
 - **Matches**: Game data with scores, status, venue
