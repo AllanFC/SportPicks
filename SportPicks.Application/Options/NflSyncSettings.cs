@@ -84,7 +84,7 @@ public class NflSyncSettings
     { 
         get 
         {
-            var now = DateTime.Now;
+            var now = DateTime.UtcNow;
             var requestedEndDate = now.AddDays(DaysForward);
             
             // Cap the end date to a reasonable NFL schedule boundary
