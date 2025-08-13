@@ -43,8 +43,10 @@ builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
 // Add NFL data synchronization services
 builder.Services.AddScoped<ITeamRepository, TeamRepository>();
 builder.Services.AddScoped<IMatchRepository, MatchRepository>();
+builder.Services.AddScoped<ISeasonRepository, SeasonRepository>();
 builder.Services.AddScoped<INflSeasonService, NflSeasonService>();
 builder.Services.AddScoped<INflDataSyncService, NflDataSyncService>();
+builder.Services.AddScoped<ISeasonSyncService, SeasonSyncService>();
 
 // Add HttpClient for ESPN API
 builder.Services.AddHttpClient<EspnApiClient>(client =>

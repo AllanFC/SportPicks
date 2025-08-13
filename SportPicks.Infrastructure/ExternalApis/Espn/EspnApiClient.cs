@@ -85,6 +85,76 @@ public class EspnApiClient : IEspnApiClient
         }
     }
 
+    /// <inheritdoc />
+    public async Task<string?> GetSeasonInfoJsonAsync(int season, CancellationToken cancellationToken = default)
+    {
+        // Use ESPN Core API for season information
+        var coreApiUrl = $"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/{season}";
+        
+        _logger.LogInformation("Fetching season info from ESPN Core API: {Season}", season);
+
+        try
+        {
+            // Create a separate HttpClient request for Core API since it's a different base URL
+            using var coreResponse = await _httpClient.GetAsync(coreApiUrl, cancellationToken);
+            
+            if (coreResponse.IsSuccessStatusCode)
+            {
+                var content = await coreResponse.Content.ReadAsStringAsync(cancellationToken);
+                
+                _logger.LogInformation("Successfully fetched season {Season} info from ESPN Core API", season);
+                return content;
+            }
+            else
+            {
+                _logger.LogWarning("ESPN Core API returned {StatusCode} for season {Season}", coreResponse.StatusCode, season);
+                return null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch season {Season} info from ESPN Core API", season);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetCurrentSeasonInfoJsonAsync(CancellationToken cancellationToken = default)
+    {
+        // Try to get current season by checking the most likely current year first
+        var currentYear = DateTime.Now.Year;
+        
+        // NFL season logic: if we're in Jan-July, try previous year first, otherwise current year
+        var primaryYear = DateTime.Now.Month >= 8 ? currentYear : currentYear - 1;
+        var secondaryYear = DateTime.Now.Month >= 8 ? currentYear + 1 : currentYear;
+
+        _logger.LogDebug("Attempting to get current NFL season info (trying {PrimaryYear} first, then {SecondaryYear})", 
+            primaryYear, secondaryYear);
+
+        // Try primary year first
+        var seasonJson = await GetSeasonInfoJsonAsync(primaryYear, cancellationToken);
+        if (seasonJson != null)
+        {
+            // Check if this season is currently active based on dates
+            if (IsSeasonCurrentlyActive(seasonJson))
+            {
+                _logger.LogInformation("Found current active season: {Season}", primaryYear);
+                return seasonJson;
+            }
+        }
+
+        // Try secondary year
+        seasonJson = await GetSeasonInfoJsonAsync(secondaryYear, cancellationToken);
+        if (seasonJson != null && IsSeasonCurrentlyActive(seasonJson))
+        {
+            _logger.LogInformation("Found current active season: {Season}", secondaryYear);
+            return seasonJson;
+        }
+
+        _logger.LogWarning("Could not determine current active NFL season, falling back to primary year {Year}", primaryYear);
+        return await GetSeasonInfoJsonAsync(primaryYear, cancellationToken);
+    }
+
     /// <summary>
     /// Gets all NFL teams from ESPN API (with typed response)
     /// </summary>
@@ -121,6 +191,41 @@ public class EspnApiClient : IEspnApiClient
         _logger.LogInformation("Successfully parsed {EventCount} events from ESPN API", eventCount);
         
         return scoreboardResponse;
+    }
+
+    /// <summary>
+    /// Gets NFL season information from ESPN Core API (with typed response)
+    /// </summary>
+    /// <param name="season">Season year</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Season information</returns>
+    public async Task<EspnCoreSeasonResponse?> GetSeasonInfoAsync(int season, CancellationToken cancellationToken = default)
+    {
+        var json = await GetSeasonInfoJsonAsync(season, cancellationToken);
+        if (string.IsNullOrEmpty(json))
+            return null;
+
+        var seasonResponse = JsonSerializer.Deserialize<EspnCoreSeasonResponse>(json, _jsonOptions);
+        _logger.LogDebug("Successfully parsed season {Season} info from ESPN Core API", season);
+        
+        return seasonResponse;
+    }
+
+    /// <summary>
+    /// Gets current NFL season information from ESPN Core API (with typed response)
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Current season information</returns>
+    public async Task<EspnCoreSeasonResponse?> GetCurrentSeasonInfoAsync(CancellationToken cancellationToken = default)
+    {
+        var json = await GetCurrentSeasonInfoJsonAsync(cancellationToken);
+        if (string.IsNullOrEmpty(json))
+            return null;
+
+        var seasonResponse = JsonSerializer.Deserialize<EspnCoreSeasonResponse>(json, _jsonOptions);
+        _logger.LogDebug("Successfully parsed current season info from ESPN Core API");
+        
+        return seasonResponse;
     }
 
     /// <summary>
@@ -197,5 +302,39 @@ public class EspnApiClient : IEspnApiClient
 
         _logger.LogError("ESPN API request failed after {MaxRetries} attempts: {Endpoint}", _settings.MaxRetries, endpoint);
         return null;
+    }
+
+    /// <summary>
+    /// Determines if a season is currently active based on its JSON data
+    /// </summary>
+    /// <param name="seasonJson">Season JSON from ESPN Core API</param>
+    /// <returns>True if season is currently active</returns>
+    private static bool IsSeasonCurrentlyActive(string seasonJson)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+            var doc = JsonDocument.Parse(seasonJson);
+            var root = doc.RootElement;
+            
+            if (root.TryGetProperty("startDate", out var startDateElement) &&
+                root.TryGetProperty("endDate", out var endDateElement))
+            {
+                var startDateStr = startDateElement.GetString();
+                var endDateStr = endDateElement.GetString();
+                
+                if (DateTime.TryParse(startDateStr, out var startDate) && 
+                    DateTime.TryParse(endDateStr, out var endDate))
+                {
+                    return now >= startDate && now <= endDate;
+                }
+            }
+        }
+        catch
+        {
+            // If we can't parse the JSON, assume it's not active
+        }
+        
+        return false;
     }
 }

@@ -15,6 +15,7 @@ public class NflDataSyncService : INflDataSyncService
     private readonly ITeamRepository _teamRepository;
     private readonly IMatchRepository _matchRepository;
     private readonly INflSeasonService _seasonService;
+    private readonly ISeasonSyncService _seasonSyncService;
     private readonly ILogger<NflDataSyncService> _logger;
     private readonly NflSyncSettings _settings;
     private readonly JsonSerializerOptions _jsonOptions;
@@ -24,6 +25,7 @@ public class NflDataSyncService : INflDataSyncService
         ITeamRepository teamRepository,
         IMatchRepository matchRepository,
         INflSeasonService seasonService,
+        ISeasonSyncService seasonSyncService,
         ILogger<NflDataSyncService> logger,
         IOptions<NflSyncSettings> settings)
     {
@@ -31,6 +33,7 @@ public class NflDataSyncService : INflDataSyncService
         _teamRepository = teamRepository;
         _matchRepository = matchRepository;
         _seasonService = seasonService;
+        _seasonSyncService = seasonSyncService;
         _logger = logger;
         _settings = settings.Value;
         _jsonOptions = new JsonSerializerOptions
@@ -79,7 +82,9 @@ public class NflDataSyncService : INflDataSyncService
     /// <inheritdoc />
     public async Task<int> SyncMatchesAsync(CancellationToken cancellationToken = default)
     {
-        return await SyncMatchesAsync(_settings.SyncStartDate, _settings.SyncEndDate, cancellationToken);
+        // Get exact sync date range from database/ESPN Core API (no buffers)
+        var (startDate, endDate) = await GetSyncDateRangeAsync(cancellationToken);
+        return await SyncMatchesAsync(startDate, endDate, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -131,6 +136,7 @@ public class NflDataSyncService : INflDataSyncService
 
         try
         {
+            // Use exact season date range from database/ESPN Core API
             var (startDate, endDate) = await _seasonService.GetSeasonDateRangeAsync(season, cancellationToken);
             return await SyncMatchesAsync(startDate, endDate, cancellationToken);
         }
@@ -148,6 +154,9 @@ public class NflDataSyncService : INflDataSyncService
 
         try
         {
+            // First ensure we have current season data
+            await _seasonSyncService.SyncCurrentSeasonAsync(cancellationToken);
+
             var teamsSynced = await SyncTeamsAsync(cancellationToken);
             var matchesSynced = await SyncMatchesAsync(cancellationToken);
 
@@ -160,6 +169,43 @@ public class NflDataSyncService : INflDataSyncService
         {
             _logger.LogError(ex, "Failed to perform full NFL data synchronization");
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Gets exact sync date range from database/ESPN Core API (no arbitrary buffers)
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Exact start and end dates for syncing</returns>
+    private async Task<(DateTime StartDate, DateTime EndDate)> GetSyncDateRangeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            // First try to sync current season to ensure we have up-to-date data
+            await _seasonSyncService.SyncCurrentSeasonAsync(cancellationToken);
+
+            // Get current season date range from database
+            var currentSeason = await _seasonService.GetCurrentSeasonAsync(cancellationToken);
+            var (startDate, endDate) = await _seasonService.GetSeasonDateRangeAsync(currentSeason, cancellationToken);
+            
+            _logger.LogInformation("Using exact season dates: {Start} to {End}", 
+                startDate.ToString("yyyy-MM-dd"), endDate.ToString("yyyy-MM-dd"));
+            
+            return (startDate, endDate);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get season dates, using current year estimate");
+            
+            // Very last resort: current year estimate
+            var currentYear = DateTime.Now.Year;
+            var fallbackStart = new DateTime(currentYear, 8, 1);
+            var fallbackEnd = new DateTime(currentYear + 1, 2, 28);
+            
+            _logger.LogWarning("Using fallback date range: {Start} to {End}", 
+                fallbackStart.ToString("yyyy-MM-dd"), fallbackEnd.ToString("yyyy-MM-dd"));
+                
+            return (fallbackStart, fallbackEnd);
         }
     }
 
@@ -209,7 +255,7 @@ public class NflDataSyncService : INflDataSyncService
     }
 
     /// <summary>
-    /// Maps ESPN events DTOs to domain Match entities (async to handle season fallback)
+    /// Maps ESPN events DTOs to domain Match entities
     /// </summary>
     /// <param name="espnEvents">ESPN events from API</param>
     /// <param name="defaultSeason">Default season from response (fallback)</param>

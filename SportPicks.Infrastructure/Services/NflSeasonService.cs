@@ -1,37 +1,34 @@
+using Domain.Sports;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
 
 namespace Infrastructure.Services;
 
 /// <summary>
-/// Service for determining NFL season information using ESPN API data
+/// Service for determining NFL season information using database data with ESPN Core API fallback
 /// </summary>
 public class NflSeasonService : INflSeasonService
 {
-    private readonly IEspnApiClient _espnApiClient;
+    private readonly ISeasonRepository _seasonRepository;
+    private readonly ISeasonSyncService _seasonSyncService;
     private readonly ILogger<NflSeasonService> _logger;
     private readonly NflSyncSettings _settings;
-    private readonly JsonSerializerOptions _jsonOptions;
 
-    // Cache for season information to avoid repeated API calls
+    // Cache for current season to avoid repeated database calls
     private int? _cachedCurrentSeason;
     private DateTime _cacheExpiry = DateTime.MinValue;
-    private readonly TimeSpan _cacheTimeout = TimeSpan.FromHours(6); // Cache for 6 hours
+    private readonly TimeSpan _cacheTimeout = TimeSpan.FromMinutes(30); // Cache for 30 minutes
 
     public NflSeasonService(
-        IEspnApiClient espnApiClient,
+        ISeasonRepository seasonRepository,
+        ISeasonSyncService seasonSyncService,
         ILogger<NflSeasonService> logger,
         IOptions<NflSyncSettings> settings)
     {
-        _espnApiClient = espnApiClient;
+        _seasonRepository = seasonRepository;
+        _seasonSyncService = seasonSyncService;
         _logger = logger;
         _settings = settings.Value;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            PropertyNameCaseInsensitive = true
-        };
     }
 
     /// <inheritdoc />
@@ -53,40 +50,51 @@ public class NflSeasonService : INflSeasonService
 
         try
         {
-            // Try to get current season from ESPN API by fetching recent scoreboard data
-            _logger.LogDebug("Detecting current NFL season from ESPN API");
+            // Try to get current season from database first
+            _logger.LogDebug("Getting current NFL season from database");
             
-            var recentDate = DateTime.Now.AddDays(-7); // Look back 7 days
-            var json = await _espnApiClient.GetScoreboardJsonAsync(recentDate, DateTime.Now, cancellationToken);
+            var currentSeason = await _seasonRepository.GetCurrentActiveSeasonAsync(cancellationToken);
             
-            if (!string.IsNullOrEmpty(json))
+            if (currentSeason != null)
             {
-                var response = JsonSerializer.Deserialize<Infrastructure.ExternalApis.Espn.Dtos.EspnScoreboardResponse>(json, _jsonOptions);
-                if (response?.Season?.Year > 0)
-                {
-                    var detectedSeason = response.Season.Year;
-                    _logger.LogInformation("Detected current NFL season from ESPN API: {Season}", detectedSeason);
-                    
-                    // Cache the result
-                    _cachedCurrentSeason = detectedSeason;
-                    _cacheExpiry = DateTime.Now.Add(_cacheTimeout);
-                    
-                    return detectedSeason;
-                }
+                _logger.LogInformation("Found current active season in database: {Season} ({DisplayName})", 
+                    currentSeason.Year, currentSeason.DisplayName);
+                
+                // Cache the result
+                _cachedCurrentSeason = currentSeason.Year;
+                _cacheExpiry = DateTime.Now.Add(_cacheTimeout);
+                
+                return currentSeason.Year;
+            }
+
+            // If no current season in database, try to sync from ESPN Core API
+            _logger.LogInformation("No current season found in database, syncing from ESPN Core API");
+            
+            var syncedSeason = await _seasonSyncService.SyncCurrentSeasonAsync(cancellationToken);
+            
+            if (syncedSeason != null)
+            {
+                _logger.LogInformation("Successfully synced current season: {Season}", syncedSeason.Year);
+                
+                // Cache the result
+                _cachedCurrentSeason = syncedSeason.Year;
+                _cacheExpiry = DateTime.Now.Add(_cacheTimeout);
+                
+                return syncedSeason.Year;
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to detect current season from ESPN API, falling back to date-based detection");
+            _logger.LogWarning(ex, "Failed to get current season from database or ESPN Core API");
         }
 
-        // Fallback to date-based calculation
-        var fallbackSeason = _settings.CurrentSeason;
-        _logger.LogInformation("Using date-based season detection: {Season}", fallbackSeason);
+        // Last resort: date-based fallback
+        var fallbackSeason = DateTime.Now.Month >= 8 ? DateTime.Now.Year : DateTime.Now.Year - 1;
+        _logger.LogWarning("Using date-based fallback for current season: {Season}", fallbackSeason);
         
         // Cache the fallback result for shorter time
         _cachedCurrentSeason = fallbackSeason;
-        _cacheExpiry = DateTime.Now.Add(TimeSpan.FromHours(1));
+        _cacheExpiry = DateTime.Now.Add(TimeSpan.FromMinutes(5));
         
         return fallbackSeason;
     }
@@ -96,53 +104,41 @@ public class NflSeasonService : INflSeasonService
     {
         try
         {
-            // Try to get actual season dates by fetching a broad range and finding the actual boundaries
-            _logger.LogDebug("Determining season date range for {Season}", season);
+            _logger.LogDebug("Getting season date range for {Season} from database", season);
             
-            // NFL seasons typically run from September to February of the following year
-            var estimatedStart = new DateTime(season, 8, 1); // Start looking from August
-            var estimatedEnd = new DateTime(season + 1, 3, 31); // End looking at March of next year
+            var seasonData = await _seasonRepository.GetByYearAsync(season, cancellationToken);
             
-            var json = await _espnApiClient.GetScoreboardJsonAsync(estimatedStart, estimatedEnd, cancellationToken);
-            
-            if (!string.IsNullOrEmpty(json))
+            if (seasonData != null)
             {
-                var response = JsonSerializer.Deserialize<Infrastructure.ExternalApis.Espn.Dtos.EspnScoreboardResponse>(json, _jsonOptions);
-                if (response?.Events?.Any() == true)
-                {
-                    var events = response.Events.Where(e => !string.IsNullOrEmpty(e.Date));
-                    if (events.Any())
-                    {
-                        var dates = events
-                            .Select(e => DateTime.TryParse(e.Date, out var date) ? date : (DateTime?)null)
-                            .Where(d => d.HasValue)
-                            .Select(d => d!.Value)
-                            .ToList();
-                            
-                        if (dates.Any())
-                        {
-                            var actualStart = dates.Min().Date;
-                            var actualEnd = dates.Max().Date.AddDays(1); // Include the last day
-                            
-                            _logger.LogInformation("Detected actual season date range for {Season}: {Start} to {End}", 
-                                season, actualStart.ToString("yyyy-MM-dd"), actualEnd.ToString("yyyy-MM-dd"));
-                                
-                            return (actualStart, actualEnd);
-                        }
-                    }
-                }
+                _logger.LogInformation("Found season {Season} in database: {Start} to {End}", 
+                    season, seasonData.StartDate.ToString("yyyy-MM-dd"), seasonData.EndDate.ToString("yyyy-MM-dd"));
+                    
+                return (seasonData.StartDate, seasonData.EndDate);
+            }
+
+            // If not in database, try to sync from ESPN Core API
+            _logger.LogInformation("Season {Season} not found in database, syncing from ESPN Core API", season);
+            
+            var syncedSeason = await _seasonSyncService.SyncSeasonAsync(season, cancellationToken);
+            
+            if (syncedSeason != null)
+            {
+                _logger.LogInformation("Successfully synced season {Season}: {Start} to {End}", 
+                    season, syncedSeason.StartDate.ToString("yyyy-MM-dd"), syncedSeason.EndDate.ToString("yyyy-MM-dd"));
+                    
+                return (syncedSeason.StartDate, syncedSeason.EndDate);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get actual season dates from ESPN API for season {Season}", season);
+            _logger.LogWarning(ex, "Failed to get season dates from database or ESPN Core API for season {Season}", season);
         }
 
-        // Fallback to estimated dates
-        var fallbackStart = new DateTime(season, 9, 1);
+        // Last resort fallback to estimated dates
+        var fallbackStart = new DateTime(season, 8, 1);
         var fallbackEnd = new DateTime(season + 1, 2, 28);
         
-        _logger.LogInformation("Using estimated season date range for {Season}: {Start} to {End}", 
+        _logger.LogWarning("Using fallback estimated season date range for {Season}: {Start} to {End}", 
             season, fallbackStart.ToString("yyyy-MM-dd"), fallbackEnd.ToString("yyyy-MM-dd"));
             
         return (fallbackStart, fallbackEnd);
@@ -151,17 +147,32 @@ public class NflSeasonService : INflSeasonService
     /// <inheritdoc />
     public bool IsDateInSeason(DateTime date, int season)
     {
-        // NFL seasons span two calendar years
-        // Season 2024 runs approximately September 2024 - February 2025
-        var seasonStart = new DateTime(season, 7, 1); // Allow some buffer before preseason
-        var seasonEnd = new DateTime(season + 1, 3, 31); // Allow buffer after Super Bowl
-        
-        var result = date >= seasonStart && date <= seasonEnd;
-        
-        _logger.LogDebug("Date {Date} is {InSeason} season {Season}", 
-            date.ToString("yyyy-MM-dd"), result ? "in" : "not in", season);
+        // Try to get accurate date range from database first
+        try
+        {
+            var (startDate, endDate) = GetSeasonDateRangeAsync(season, CancellationToken.None).Result;
+            var result = date >= startDate && date <= endDate;
             
-        return result;
+            _logger.LogDebug("Date {Date} is {InSeason} season {Season} (database/ESPN Core API dates)", 
+                date.ToString("yyyy-MM-dd"), result ? "in" : "not in", season);
+                
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to use database/ESPN Core API for date check, using fallback logic");
+        }
+
+        // Fallback to estimated logic
+        var seasonStart = new DateTime(season, 7, 1);
+        var seasonEnd = new DateTime(season + 1, 3, 31);
+        
+        var fallbackResult = date >= seasonStart && date <= seasonEnd;
+        
+        _logger.LogDebug("Date {Date} is {InSeason} season {Season} (fallback logic)", 
+            date.ToString("yyyy-MM-dd"), fallbackResult ? "in" : "not in", season);
+            
+        return fallbackResult;
     }
 
     /// <summary>

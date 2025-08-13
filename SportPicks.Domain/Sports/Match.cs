@@ -28,7 +28,7 @@ public class Match
     public int Season { get; set; }
     
     /// <summary>
-    /// Season type: 1=Preseason, 2=Regular Season, 3=Postseason
+    /// Season type: 1=Preseason, 2=Regular, 3=Postseason
     /// </summary>
     public int SeasonType { get; set; }
     

@@ -18,8 +18,9 @@ public class NflDataSyncServiceTests
     private readonly Mock<ITeamRepository> _mockTeamRepository;
     private readonly Mock<IMatchRepository> _mockMatchRepository;
     private readonly Mock<INflSeasonService> _mockSeasonService;
+    private readonly Mock<ISeasonSyncService> _mockSeasonSyncService;
     private readonly Mock<ILogger<NflDataSyncService>> _mockLogger;
-    private readonly NflSyncSettings _settings;
+    private readonly Mock<IOptions<NflSyncSettings>> _mockSettings;
     private readonly NflDataSyncService _service;
 
     public NflDataSyncServiceTests()
@@ -28,29 +29,30 @@ public class NflDataSyncServiceTests
         _mockTeamRepository = new Mock<ITeamRepository>();
         _mockMatchRepository = new Mock<IMatchRepository>();
         _mockSeasonService = new Mock<INflSeasonService>();
+        _mockSeasonSyncService = new Mock<ISeasonSyncService>();
         _mockLogger = new Mock<ILogger<NflDataSyncService>>();
         
-        _settings = new NflSyncSettings
+        var settings = new NflSyncSettings
         {
+            BaseUrl = "https://site.api.espn.com",
             TargetSeason = 2024,
             TimeoutSeconds = 30,
             MaxRetries = 3,
             RetryDelayMs = 1000,
-            ScoreboardLimit = 1000,
-            DaysBack = 30,
-            DaysForward = 365
+            ScoreboardLimit = 1000
         };
-        
-        var mockSettings = new Mock<IOptions<NflSyncSettings>>();
-        mockSettings.Setup(s => s.Value).Returns(_settings);
+
+        _mockSettings = new Mock<IOptions<NflSyncSettings>>();
+        _mockSettings.Setup(x => x.Value).Returns(settings);
 
         _service = new NflDataSyncService(
             _mockEspnApiClient.Object,
             _mockTeamRepository.Object,
             _mockMatchRepository.Object,
             _mockSeasonService.Object,
+            _mockSeasonSyncService.Object,
             _mockLogger.Object,
-            mockSettings.Object);
+            _mockSettings.Object);
     }
 
     [Fact]
@@ -95,11 +97,19 @@ public class NflDataSyncServiceTests
     {
         // Arrange
         var scoreboardJson = CreateMockScoreboardJson();
-        _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(scoreboardJson);
-
+        var mockSeason = new Domain.Sports.Season(2024, "2024", DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3), true);
+        
+        _mockSeasonSyncService.Setup(x => x.SyncCurrentSeasonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockSeason);
+        
         _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(2024);
+        
+        _mockSeasonService.Setup(x => x.GetSeasonDateRangeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3)));
+        
+        _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(scoreboardJson);
 
         _mockMatchRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<MatchEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -125,6 +135,9 @@ public class NflDataSyncServiceTests
         _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(scoreboardJson);
 
+        _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2024);
+
         _mockMatchRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<MatchEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -142,14 +155,21 @@ public class NflDataSyncServiceTests
         // Arrange
         var teamsJson = CreateMockTeamsJson();
         var scoreboardJson = CreateMockScoreboardJson();
+        var mockSeason = new Domain.Sports.Season(2024, "2024", DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3), true);
+
+        _mockSeasonSyncService.Setup(x => x.SyncCurrentSeasonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockSeason);
+        
+        _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2024);
+        
+        _mockSeasonService.Setup(x => x.GetSeasonDateRangeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DateTime.Now.AddMonths(-3), DateTime.Now.AddMonths(3)));
 
         _mockEspnApiClient.Setup(x => x.GetTeamsJsonAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(teamsJson);
         _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(scoreboardJson);
-
-        _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(2024);
 
         _mockTeamRepository.Setup(x => x.AddOrUpdateRangeAsync(It.IsAny<IEnumerable<Team>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -178,6 +198,9 @@ public class NflDataSyncServiceTests
 
         _mockSeasonService.Setup(x => x.GetSeasonDateRangeAsync(season, It.IsAny<CancellationToken>()))
             .ReturnsAsync((startDate, endDate));
+        
+        _mockSeasonService.Setup(x => x.GetCurrentSeasonAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2024);
         
         _mockEspnApiClient.Setup(x => x.GetScoreboardJsonAsync(startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(scoreboardJson);
@@ -249,7 +272,9 @@ public class NflDataSyncServiceTests
         return """
         {
             "season": {
-                "year": 2024
+                "year": 2024,
+                "type": 2,
+                "slug": "regular"
             },
             "week": {
                 "number": 1
@@ -259,6 +284,14 @@ public class NflDataSyncServiceTests
                     "id": "401547417",
                     "name": "Patriots at Bills",
                     "date": "2024-09-15T17:00:00Z",
+                    "season": {
+                        "year": 2024,
+                        "type": 2,
+                        "slug": "regular"
+                    },
+                    "week": {
+                        "number": 1
+                    },
                     "status": {
                         "type": {
                             "state": "pre",
