@@ -45,7 +45,7 @@ public class NflSeasonService : INflSeasonService
         }
 
         // Check cache first
-        if (_cachedCurrentSeason.HasValue && DateTime.Now < _cacheExpiry)
+        if (_cachedCurrentSeason.HasValue && DateTime.UtcNow < _cacheExpiry)
         {
             _logger.LogDebug("Using cached current season: {Season}", _cachedCurrentSeason.Value);
             return _cachedCurrentSeason.Value;
