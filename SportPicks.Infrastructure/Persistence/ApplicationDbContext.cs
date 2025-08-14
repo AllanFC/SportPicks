@@ -350,7 +350,7 @@ public sealed class ApplicationDbContext : DbContext
             // Unique constraints
             entity.HasIndex(e => e.InviteCode)
                 .IsUnique()
-                .HasFilter($"[{nameof(League.InviteCode)}] IS NOT NULL")
+                .HasFilter($"\"{nameof(League.InviteCode)}\" IS NOT NULL")
                 .HasDatabaseName("IX_Leagues_InviteCode_Unique");
                 
             // Performance indexes
