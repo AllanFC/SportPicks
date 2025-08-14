@@ -1,3 +1,4 @@
+using Application.Common.Interfaces;
 using Domain.Sports;
 using Infrastructure.ExternalApis.Espn.Dtos;
 using Microsoft.Extensions.Logging;
@@ -12,6 +13,9 @@ public class SeasonSyncService : ISeasonSyncService
     private readonly ISeasonRepository _seasonRepository;
     private readonly ILogger<SeasonSyncService> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
+
+    // NFL sport ID for consistency
+    private static readonly Guid NflSportId = new("11111111-1111-1111-1111-111111111111");
 
     public SeasonSyncService(
         IEspnApiClient espnApiClient,
@@ -66,79 +70,77 @@ public class SeasonSyncService : ISeasonSyncService
             var now = DateTime.UtcNow;
             var isActive = now >= startDate && now <= endDate;
 
-            var season = new Season(espnSeason.Year, espnSeason.DisplayName, startDate, endDate, isActive);
+            var season = new Season(espnSeason.Year, espnSeason.DisplayName, NflSportId, startDate, endDate, isActive);
             
+            // Use AddOrUpdateAsync to handle existing seasons
             await _seasonRepository.AddOrUpdateAsync(season, cancellationToken);
-
-            _logger.LogInformation("Successfully synced season {Year}: {StartDate} to {EndDate} (Active: {IsActive})", 
-                year, startDate.ToString("yyyy-MM-dd"), endDate.ToString("yyyy-MM-dd"), isActive);
-
+            
+            _logger.LogInformation("Successfully synced season {Year}: {DisplayName} ({StartDate} to {EndDate})",
+                season.Year, season.DisplayName, startDate.ToString("yyyy-MM-dd"), endDate.ToString("yyyy-MM-dd"));
+            
             return season;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to sync season {Year} from ESPN Core API", year);
-            throw;
+            _logger.LogError(ex, "Failed to sync season {Year}", year);
+            return null;
         }
     }
 
     public async Task<Season?> SyncCurrentSeasonAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Syncing current season from ESPN Core API");
+        _logger.LogInformation("Syncing current NFL season from ESPN Core API");
 
         try
         {
-            var seasonJson = await _espnApiClient.GetCurrentSeasonInfoJsonAsync(cancellationToken);
+            // Try current year first
+            var currentYear = DateTime.UtcNow.Year;
+            var season = await SyncSeasonAsync(currentYear, cancellationToken);
             
-            if (string.IsNullOrEmpty(seasonJson))
+            if (season != null && season.IsActive)
             {
-                _logger.LogWarning("No current season data received from ESPN Core API");
-                return null;
+                _logger.LogInformation("Found active current season: {Year}", season.Year);
+                return season;
             }
 
-            var espnSeason = JsonSerializer.Deserialize<EspnCoreSeasonResponse>(seasonJson, _jsonOptions);
+            // If current year season is not active, try previous year 
+            // (NFL seasons span across calendar years)
+            var previousYear = currentYear - 1;
+            season = await SyncSeasonAsync(previousYear, cancellationToken);
             
-            if (espnSeason == null)
+            if (season != null && season.IsActive)
             {
-                _logger.LogWarning("Failed to deserialize current season data");
-                return null;
+                _logger.LogInformation("Found active season from previous year: {Year}", season.Year);
+                return season;
             }
 
-            if (!DateTime.TryParse(espnSeason.StartDate, null, DateTimeStyles.RoundtripKind, out var startDate))
-            {
-                _logger.LogWarning("Invalid start date format for current season: {StartDate}", espnSeason.StartDate);
-                return null;
-            }
-
-            if (!DateTime.TryParse(espnSeason.EndDate, null, DateTimeStyles.RoundtripKind, out var endDate))
-            {
-                _logger.LogWarning("Invalid end date format for current season: {EndDate}", espnSeason.EndDate);
-                return null;
-            }
-
-            var season = new Season(espnSeason.Year, espnSeason.DisplayName, startDate, endDate, true);
+            // If neither worked, try next year (in case we're early in the year)
+            var nextYear = currentYear + 1;
+            season = await SyncSeasonAsync(nextYear, cancellationToken);
             
-            await _seasonRepository.AddOrUpdateAsync(season, cancellationToken);
+            if (season != null && season.IsActive)
+            {
+                _logger.LogInformation("Found active season for next year: {Year}", season.Year);
+                return season;
+            }
 
-            _logger.LogInformation("Successfully synced current season {Year}: {StartDate} to {EndDate}", 
-                espnSeason.Year, startDate.ToString("yyyy-MM-dd"), endDate.ToString("yyyy-MM-dd"));
-
-            return season;
+            _logger.LogWarning("No active NFL season found in current, previous, or next year");
+            return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to sync current season from ESPN Core API");
-            throw;
+            _logger.LogError(ex, "Failed to sync current NFL season");
+            return null;
         }
     }
 
     public async Task<int> UpdateActiveSeasonStatusAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Updating active season status for all seasons");
+        _logger.LogInformation("Updating active season status for all NFL seasons");
 
         try
         {
-            var allSeasons = await _seasonRepository.GetAllSeasonsAsync(cancellationToken);
+            var allSeasons = await _seasonRepository.GetBySportAsync(NflSportId, cancellationToken);
             var now = DateTime.UtcNow;
             var updatedCount = 0;
 
@@ -148,15 +150,16 @@ public class SeasonSyncService : ISeasonSyncService
                 
                 if (season.IsActive != shouldBeActive)
                 {
-                    season.UpdateSeason(season.DisplayName, season.StartDate, season.EndDate, shouldBeActive);
+                    season.UpdateSeason(season.DisplayName, season.StartDate, season.EndDate, shouldBeActive, season.Type);
                     await _seasonRepository.UpdateAsync(season, cancellationToken);
                     updatedCount++;
                     
-                    _logger.LogDebug("Updated season {Year} active status to {IsActive}", season.Year, shouldBeActive);
+                    _logger.LogInformation("Updated season {Year} active status to {IsActive}", 
+                        season.Year, shouldBeActive);
                 }
             }
 
-            _logger.LogInformation("Updated active status for {Count} seasons", updatedCount);
+            _logger.LogInformation("Updated active status for {Count} NFL seasons", updatedCount);
             return updatedCount;
         }
         catch (Exception ex)

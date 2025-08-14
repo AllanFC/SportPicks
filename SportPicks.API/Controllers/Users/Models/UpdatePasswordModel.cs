@@ -1,6 +1,6 @@
-﻿namespace API.Controllers.Users.Models;
+﻿namespace SportPicks.API.Controllers.Users.Models;
 
-public class UpdatePasswordModel
+public sealed class UpdatePasswordModel
 {
     [Required]
     public required string OldPassword { get; set; }

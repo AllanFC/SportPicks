@@ -1,4 +1,4 @@
-using Application.NflSync.Dtos;
+using SportPicks.API.Models;
 
 namespace SportPicks.API.Controllers.Admin;
 
@@ -10,15 +10,15 @@ namespace SportPicks.API.Controllers.Admin;
 [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
 [Tags("User Management")]
 [Produces("application/json")]
-public class UserRoleController : ControllerBase
+public sealed class UserRoleController : ControllerBase
 {
     private readonly IUserRoleService _userRoleService;
     private readonly ILogger<UserRoleController> _logger;
 
     public UserRoleController(IUserRoleService userRoleService, ILogger<UserRoleController> logger)
     {
-        _userRoleService = userRoleService;
-        _logger = logger;
+        _userRoleService = userRoleService ?? throw new ArgumentNullException(nameof(userRoleService));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     /// <summary>
@@ -33,15 +33,15 @@ public class UserRoleController : ControllerBase
     /// <response code="500">Internal server error</response>
     [HttpPost("promote-to-admin")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status500InternalServerError)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> PromoteToAdmin([FromQuery] string email)
     {
-        if (string.IsNullOrEmpty(email))
+        if (string.IsNullOrWhiteSpace(email))
         {
-            return BadRequest(new ErrorResponseDto { Message = "Email is required" });
+            return BadRequest(new ErrorResponse { Message = "Email is required" });
         }
 
         var adminUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -50,25 +50,33 @@ public class UserRoleController : ControllerBase
         _logger.LogWarning("ADMIN PROMOTION REQUEST: User {AdminUserName} ({AdminUserId}) attempting to promote {TargetEmail} to admin", 
             adminUserName, adminUserId, email);
 
-        var success = await _userRoleService.PromoteToAdminAsync(email);
-        
-        if (success)
+        try
         {
-            _logger.LogWarning("ADMIN PROMOTION SUCCESS: User {TargetEmail} promoted to admin by {AdminUserName} ({AdminUserId})", 
-                email, adminUserName, adminUserId);
+            var success = await _userRoleService.PromoteToAdminAsync(email);
             
-            return Ok(new
+            if (success)
             {
-                Success = true,
-                Message = $"User {email} promoted to admin successfully",
-                PromotedBy = adminUserName,
-                PromotedAt = DateTime.UtcNow
-            });
+                _logger.LogWarning("ADMIN PROMOTION SUCCESS: User {TargetEmail} promoted to admin by {AdminUserName} ({AdminUserId})", 
+                    email, adminUserName, adminUserId);
+                
+                return Ok(new
+                {
+                    Success = true,
+                    Message = $"User {email} promoted to admin successfully",
+                    PromotedBy = adminUserName,
+                    PromotedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                _logger.LogWarning("ADMIN PROMOTION FAILED: Could not promote {TargetEmail} - user not found or already admin", email);
+                return BadRequest(new ErrorResponse { Message = "Failed to promote user - user not found or already admin" });
+            }
         }
-        else
+        catch (Exception ex)
         {
-            _logger.LogWarning("ADMIN PROMOTION FAILED: Could not promote {TargetEmail} - user not found or already admin", email);
-            return BadRequest(new ErrorResponseDto { Message = "Failed to promote user - user not found or already admin" });
+            _logger.LogError(ex, "Error promoting user {Email} to admin", email);
+            return StatusCode(500, new ErrorResponse { Message = "Internal server error occurred while promoting user" });
         }
     }
 
@@ -82,29 +90,37 @@ public class UserRoleController : ControllerBase
     /// <response code="500">Internal server error</response>
     [HttpGet("admins")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status500InternalServerError)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> GetAdminUsers()
     {
-        var adminUsers = await _userRoleService.GetAdminUsersAsync();
-        
-        var adminData = adminUsers.Select(u => new
+        try
         {
-            u.Id,
-            u.Username,
-            u.Email,
-            u.UserRole,
-            u.CreatedAt,
-            u.UpdatedAt
-        }).ToList();
+            var adminUsers = await _userRoleService.GetAdminUsersAsync();
+            
+            var adminData = adminUsers.Select(u => new
+            {
+                u.Id,
+                u.Username,
+                u.Email,
+                u.UserRole,
+                u.CreatedAt,
+                u.UpdatedAt
+            }).ToList();
 
-        return Ok(new
+            return Ok(new
+            {
+                Success = true,
+                AdminCount = adminData.Count,
+                Admins = adminData
+            });
+        }
+        catch (Exception ex)
         {
-            Success = true,
-            AdminCount = adminData.Count,
-            Admins = adminData
-        });
+            _logger.LogError(ex, "Error retrieving admin users");
+            return StatusCode(500, new ErrorResponse { Message = "Internal server error occurred while retrieving admin users" });
+        }
     }
 
     /// <summary>
@@ -119,10 +135,10 @@ public class UserRoleController : ControllerBase
     /// <response code="500">Internal server error</response>
     [HttpPost("demote-admin/{userId:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status403Forbidden)]
-    [ProducesResponseType<ErrorResponseDto>(StatusCodes.Status500InternalServerError)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ErrorResponse>(StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> DemoteAdmin(Guid userId)
     {
         var adminUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -131,30 +147,38 @@ public class UserRoleController : ControllerBase
         // Prevent self-demotion
         if (adminUserId == userId.ToString())
         {
-            return BadRequest(new ErrorResponseDto { Message = "Cannot demote yourself" });
+            return BadRequest(new ErrorResponse { Message = "Cannot demote yourself" });
         }
 
         _logger.LogWarning("ADMIN DEMOTION REQUEST: User {AdminUserName} ({AdminUserId}) attempting to demote admin {TargetUserId}", 
             adminUserName, adminUserId, userId);
 
-        var success = await _userRoleService.DemoteToUserAsync(userId);
-        
-        if (success)
+        try
         {
-            _logger.LogWarning("ADMIN DEMOTION SUCCESS: Admin {TargetUserId} demoted to user by {AdminUserName} ({AdminUserId})", 
-                userId, adminUserName, adminUserId);
+            var success = await _userRoleService.DemoteToUserAsync(userId);
             
-            return Ok(new
+            if (success)
             {
-                Success = true,
-                Message = "Admin user demoted successfully",
-                DemotedBy = adminUserName,
-                DemotedAt = DateTime.UtcNow
-            });
+                _logger.LogWarning("ADMIN DEMOTION SUCCESS: Admin {TargetUserId} demoted to user by {AdminUserName} ({AdminUserId})", 
+                    userId, adminUserName, adminUserId);
+                
+                return Ok(new
+                {
+                    Success = true,
+                    Message = "Admin user demoted successfully",
+                    DemotedBy = adminUserName,
+                    DemotedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                return BadRequest(new ErrorResponse { Message = "Failed to demote admin - user not found or not an admin" });
+            }
         }
-        else
+        catch (Exception ex)
         {
-            return BadRequest(new ErrorResponseDto { Message = "Failed to demote admin - user not found or not an admin" });
+            _logger.LogError(ex, "Error demoting admin user {UserId}", userId);
+            return StatusCode(500, new ErrorResponse { Message = "Internal server error occurred while demoting admin" });
         }
     }
 }
